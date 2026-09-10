@@ -1,0 +1,55 @@
+name: Build Frida Gadget (Android)
+
+on:
+  workflow_dispatch: # 支持在 GitHub 页面手动点击运行
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python & Dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libtool automake autoconf flex bison pkg-config ninja-build
+          pip install meson ninja
+
+      - name: Download & Setup Android NDK r29
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          unzip -q android-ndk-r29-linux.zip
+          echo "ANDROID_NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r29" >> $GITHUB_ENV
+
+      - name: Compile Frida Gadget (arm64)
+        run: |
+          python tools/ensure-submodules.py frida-core
+          
+          export FRIDA_PREFIX=$(pwd)/build/frida-android-arm64
+          
+          ./configure \
+            "--prefix=$FRIDA_PREFIX" \
+            --host=android-arm64 \
+            --enable-portal \
+            -- \
+            -Dfrida-gum:devkits=gum,gumjs \
+            -Dfrida-core:compiler_backend=enabled \
+            -Dfrida-core:devkits=core
+
+          make
+          make install
+
+      - name: Upload Gadget Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-gadget-android-arm64
+          path: build/frida-android-arm64/lib/frida-1.0/64/frida-gadget.so
