@@ -839,7 +839,16 @@ namespace Frida.Barebone {
 			GDB.Thread landed = ex.thread;
 			uint64 retval = yield landed.read_register ("x0", cancellable);
 
-			yield landed.write_registers (saved_regs, cancellable);
+			// A core that the call migrated to keeps its own platform register, which on some
+			// kernels points at that core's per-processor data. Handing it the register of the
+			// core we started on would make every later access reach the wrong processor.
+			var restored = saved_regs;
+			if (landed.id != thread.id) {
+				restored = new Gee.HashMap<string, Variant> ();
+				restored.set_all (saved_regs);
+				restored.unset (PLATFORM_REGISTER);
+			}
+			yield landed.write_registers (restored, cancellable);
 
 			if (was_running)
 				yield gdb.continue (cancellable);
@@ -1693,5 +1702,6 @@ namespace Frida.Barebone {
 #endif
 
 		private const size_t RED_ZONE_SIZE = 128;
+		private const string PLATFORM_REGISTER = "x18";
 	}
 }
