@@ -839,16 +839,7 @@ namespace Frida.Barebone {
 			GDB.Thread landed = ex.thread;
 			uint64 retval = yield landed.read_register ("x0", cancellable);
 
-			// A core that the call migrated to keeps its own platform register, which on some
-			// kernels points at that core's per-processor data. Handing it the register of the
-			// core we started on would make every later access reach the wrong processor.
-			var restored = saved_regs;
-			if (landed.id != thread.id) {
-				restored = new Gee.HashMap<string, Variant> ();
-				restored.set_all (saved_regs);
-				restored.unset (PLATFORM_REGISTER);
-			}
-			yield landed.write_registers (restored, cancellable);
+			yield restore_registers (thread, landed, saved_regs, cancellable);
 
 			if (was_running)
 				yield gdb.continue (cancellable);
@@ -880,10 +871,25 @@ namespace Frida.Barebone {
 			} while (ex.breakpoint != bp);
 			yield bp.remove (cancellable);
 
-			yield ex.thread.write_registers (saved_regs, cancellable);
+			yield restore_registers (thread, ex.thread, saved_regs, cancellable);
 
 			if (was_running)
 				yield gdb.continue (cancellable);
+		}
+
+		// A core that the run migrated to keeps its own platform register, which on some kernels
+		// points at that core's per-processor data. Handing it the register of the core we began
+		// on would make every later access reach the wrong processor.
+		private async void restore_registers (GDB.Thread origin, GDB.Thread landed,
+				Gee.Map<string, Variant> saved, Cancellable? cancellable) throws Error, IOError {
+			var restored = saved;
+			if (landed.id != origin.id) {
+				restored = new Gee.HashMap<string, Variant> ();
+				restored.set_all (saved);
+				restored.unset (PLATFORM_REGISTER);
+			}
+
+			yield landed.write_registers (restored, cancellable);
 		}
 
 		public async CallFrame load_call_frame (GDB.Thread thread, uint arity, Cancellable? cancellable) throws Error, IOError {
