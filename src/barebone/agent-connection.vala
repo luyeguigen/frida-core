@@ -30,6 +30,8 @@ namespace Frida.Barebone {
 		private Gee.Map<string, SymbolInfo> resolved_symbols;
 		private Allocation config_allocation;
 
+		private Promise<bool>? listening;
+
 		private Gee.Map<uint16, Promise<Variant>> pending_requests = new Gee.HashMap<uint16, Promise<Variant>> ();
 		private uint16 next_request_id = 1;
 
@@ -38,6 +40,7 @@ namespace Frida.Barebone {
 		private const uint INJECT_POLL_INTERVAL_MS = 100;
 		private const uint LEAVE_MAX_ATTEMPTS = 40;
 		private const uint LEAVE_INTERVAL_MS = 50;
+		private const uint GREETING_TIMEOUT_MS = 20000;
 
 		public static async AgentConnection open (BareboneInjectedAgentConfig agent_config, BareboneImageConfig? image_config,
 				BareboneKernelKind kernel_kind, KernelRelocation? relocation, uint64 kernel_base, Machine machine,
@@ -296,7 +299,28 @@ namespace Frida.Barebone {
 
 			process_incoming_messages.begin ();
 
+			yield wait_to_be_greeted (cancellable);
+
 			return true;
+		}
+
+		private async void wait_to_be_greeted (Cancellable? cancellable) throws Error, IOError {
+			if (listening == null)
+				return;
+
+			var timeout = new TimeoutSource (GREETING_TIMEOUT_MS);
+			timeout.set_callback (() => {
+				if (!listening.future.ready)
+					listening.reject (new Error.TIMED_OUT ("The agent never announced itself"));
+				return false;
+			});
+			timeout.attach (MainContext.get_thread_default ());
+
+			try {
+				yield listening.future.wait_async (cancellable);
+			} finally {
+				timeout.destroy ();
+			}
 		}
 
 		private async Variant resolve_transport (Cancellable? cancellable) throws Error, IOError {
@@ -333,6 +357,8 @@ namespace Frida.Barebone {
 			} catch (GLib.Error e) {
 				throw new Error.TRANSPORT ("Unable to reach the serial port of the guest: %s", e.message);
 			}
+
+			listening = new Promise<bool> ();
 #endif
 		}
 
@@ -986,7 +1012,10 @@ namespace Frida.Barebone {
 					Variant payload;
 					message.get ("(yquv)", out command_code, out request_id, out destination, out payload);
 
-					if (command_code == Command.SPAWN_ADDED) {
+					if (command_code == Command.READY) {
+						if (listening != null && !listening.future.ready)
+							listening.resolve (true);
+					} else if (command_code == Command.SPAWN_ADDED) {
 						if (!payload.check_format_string ("(us)", false))
 							throw new Error.PROTOCOL ("Invalid spawn added payload format");
 
@@ -1178,7 +1207,8 @@ namespace Frida.Barebone {
 			ENUMERATE_SHORTCUTS = 19,
 			REPLY = 128,
 			SCRIPT_MESSAGE = 129,
-			SPAWN_ADDED = 130;
+			SPAWN_ADDED = 130,
+			READY = 131;
 
 			public string to_nick () {
 				return Marshal.enum_to_nick<Command> (this);
