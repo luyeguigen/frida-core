@@ -51,6 +51,7 @@ SECTIONS {
     _ZwReadFile = .; . += 4;
     _ZwClose = .; . += 4;
     _ZwCreateEvent = .; . += 4;
+    _ZwWaitForSingleObject = .; . += 4;
     _ZwAllocateVirtualMemory = .; . += 4;
     _ZwFreeVirtualMemory = .; . += 4;
     _ZwCreateThread = .; . += 4;
